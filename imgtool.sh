@@ -8,6 +8,7 @@ readonly QUALITY_JPEG=85
 readonly QUALITY_WEBP=82
 readonly QUALITY_AVIF=60
 readonly PNG_COMPRESSION_LEVEL=9
+RESULTS_DIR_CLEANUP=""
 
 # ── Utility Functions ─────────────────────────────────────────────────
 
@@ -43,9 +44,31 @@ human_readable_size() {
     fi
 }
 
-log_info()  { printf "\033[0;32m[INFO]\033[0m  %s\n" "$*"; }
+log_info()  { printf "\033[0;32m[INFO]\033[0m  %s\n" "$*" >&2; }
 log_warn()  { printf "\033[0;33m[WARN]\033[0m  %s\n" "$*" >&2; }
 log_error() { printf "\033[0;31m[ERROR]\033[0m %s\n" "$*" >&2; }
+log_verbose() { (( VERBOSE >= 1 )) && printf "\033[0;36m[VERB]\033[0m  %s\n" "$*" >&2 || true; }
+log_debug()   { (( VERBOSE >= 3 )) && printf "\033[0;35m[DEBUG]\033[0m %s\n" "$*" >&2 || true; }
+
+show_progress() {
+    if [[ "$SHOW_PROGRESS" == true ]]; then
+        local current="$1" total="$2" file="$3"
+        local pct=0
+        (( total > 0 )) && pct=$(( current * 100 / total ))
+        local bar_width=30
+        local filled=$(( pct * bar_width / 100 ))
+        local empty=$(( bar_width - filled ))
+        local bar
+        bar="$(printf '%*s' "$filled" '' | tr ' ' '█')$(printf '%*s' "$empty" '' | tr ' ' '░')"
+        printf "\r\033[K\033[0;33m[%d/%d]\033[0m %s %d%% %s" "$current" "$total" "$bar" "$pct" "$file" >&2
+    fi
+}
+
+clear_progress() {
+    if [[ "$SHOW_PROGRESS" == true ]]; then
+        printf "\r\033[K" >&2
+    fi
+}
 
 get_cpu_count() {
     if command -v nproc &>/dev/null; then
@@ -69,8 +92,10 @@ USAGE:
 DESCRIPTION:
     Recursively processes images in the given directory using ImageMagick 7.
     Supports compression, resizing, dimension limits, and format conversion.
+    At least one operation is required: --compress, --resize, --max-width/--max-height, or --convert.
 
 OPTIONS:
+    --compress            Enable compression using format-aware defaults
     --resize N%            Proportional resize (e.g., 50%)
     --max-width PIXELS     Maximum width ceiling (shrink only)
     --max-height PIXELS    Maximum height ceiling (shrink only)
@@ -79,6 +104,9 @@ OPTIONS:
     --keep-original        Keep original file alongside processed file
     --parallel [N]         Enable parallel processing (default: CPU count)
     --dry-run              Preview operations without processing
+    --progress             Show progress bar during processing
+    -v                     Verbose output (file details)
+    -vvv                   Debug output (magick commands, dimensions)
     --help                 Show this help message
     --version              Show version
 
@@ -86,11 +114,14 @@ QUALITY DEFAULTS:
     JPEG = 85, WebP = 82, AVIF = 60, PNG = compression-level 9
 
 EXAMPLES:
-    imgtool.sh ./images                          # Compress in place
+    imgtool.sh --compress ./images               # Compress in place
     imgtool.sh --resize 50% ./images             # Resize to 50%
+    imgtool.sh --compress --quality 70 ./images  # Compress with custom quality
     imgtool.sh --convert webp --keep-original .   # Convert to WebP, keep originals
     imgtool.sh --max-width 800 --max-height 600 ./photos
     imgtool.sh --parallel 8 --quality 70 ./bulk
+    imgtool.sh --progress -v ./images             # With progress bar and verbose
+    imgtool.sh -vvv ./images                      # Debug mode (full details)
 
 EOF
 }
@@ -102,6 +133,7 @@ show_version() {
 # ── Argument Parsing ──────────────────────────────────────────────────
 
 parse_args() {
+    COMPRESS=false
     RESIZE=""
     MAX_WIDTH=""
     MAX_HEIGHT=""
@@ -110,11 +142,15 @@ parse_args() {
     KEEP_ORIGINAL=false
     PARALLEL=0
     DRY_RUN=false
+    VERBOSE=0
+    SHOW_PROGRESS=false
     TARGET_DIR=""
     PROCESS_SINGLE=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --compress)
+                COMPRESS=true; shift ;;
             --resize)
                 [[ -z "${2:-}" ]] && { log_error "--resize requires a value (e.g., 50%)"; exit 1; }
                 RESIZE="$2"; shift 2 ;;
@@ -141,6 +177,12 @@ parse_args() {
                 ;;
             --dry-run)
                 DRY_RUN=true; shift ;;
+            --progress)
+                SHOW_PROGRESS=true; shift ;;
+            -vvv)
+                VERBOSE=3; shift ;;
+            -v)
+                VERBOSE=1; shift ;;
             --help)
                 show_help; exit 0 ;;
             --version)
@@ -160,6 +202,38 @@ parse_args() {
 validate() {
     if ! command -v magick &>/dev/null; then
         log_error "ImageMagick 7 (magick) is not installed or not in PATH."
+        case "$(uname -s)" in
+            Darwin)
+                echo "Install on macOS: brew install imagemagick" >&2
+                ;;
+            Linux)
+                echo "Install on Ubuntu/Debian: sudo apt install imagemagick" >&2
+                echo "Install on Fedora: sudo dnf install ImageMagick" >&2
+                echo "Install on Arch: sudo pacman -S imagemagick" >&2
+                ;;
+            *)
+                echo "Install ImageMagick 7 and ensure the 'magick' command is in PATH." >&2
+                ;;
+        esac
+        echo "Official downloads: https://imagemagick.org/script/download.php" >&2
+        exit 1
+    fi
+
+    if ! command -v bc &>/dev/null; then
+        log_error "Required dependency 'bc' is not installed or not in PATH."
+        case "$(uname -s)" in
+            Darwin)
+                echo "Install on macOS: brew install bc" >&2
+                ;;
+            Linux)
+                echo "Install on Ubuntu/Debian: sudo apt install bc" >&2
+                echo "Install on Fedora: sudo dnf install bc" >&2
+                echo "Install on Arch: sudo pacman -S bc" >&2
+                ;;
+            *)
+                echo "Install 'bc' and ensure it is in PATH." >&2
+                ;;
+        esac
         exit 1
     fi
 
@@ -167,6 +241,12 @@ validate() {
         log_error "No target directory specified."
         echo "Run 'imgtool.sh --help' for usage."
         exit 1
+    fi
+
+    if [[ "$COMPRESS" == false && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" && -z "$CONVERT_FORMAT" ]]; then
+        log_warn "No operation specified."
+        show_help
+        exit 0
     fi
 
     if [[ ! -d "$TARGET_DIR" ]]; then
@@ -189,6 +269,10 @@ validate() {
     if [[ -n "$QUALITY_OVERRIDE" ]]; then
         if ! [[ "$QUALITY_OVERRIDE" =~ ^[0-9]+$ ]] || (( QUALITY_OVERRIDE < 1 || QUALITY_OVERRIDE > 100 )); then
             log_error "--quality must be a number between 1 and 100"
+            exit 1
+        fi
+        if [[ "$COMPRESS" == false && -z "$CONVERT_FORMAT" ]]; then
+            log_error "--quality requires --compress or --convert"
             exit 1
         fi
     fi
@@ -286,6 +370,11 @@ process_file() {
     local input_size
     input_size="$(get_file_size_bytes "$input_file")"
 
+    log_verbose "Processing: $input_file (format=$output_format, size=$(human_readable_size "$input_size"))"
+    if [[ "$is_converting" == true ]]; then
+        log_verbose "Converting: $input_ext -> $output_file_ext"
+    fi
+
     if [[ "$DRY_RUN" == true ]]; then
         local hr_size
         hr_size="$(human_readable_size "$input_size")"
@@ -294,17 +383,24 @@ process_file() {
         else
             log_info "[DRY-RUN] Would process: $input_file ($hr_size)"
         fi
-        echo "$input_size 0 0"
+        echo "$input_size $input_size 0"
         return 0
     fi
 
     # Build magick arguments
     local -a magick_args=()
-    magick_args+=("-strip")
-    magick_args+=("-interlace" "Plane")
+    if [[ "$COMPRESS" == true ]]; then
+        magick_args+=("-strip")
+    fi
+
+    # Progressive/interlaced output helps JPEG delivery, but for PNG it often
+    # increases file size substantially (Adam7). Keep it format-specific.
+    if [[ "$COMPRESS" == true && "$output_format" == "jpeg" ]]; then
+        magick_args+=("-interlace" "Plane")
+    fi
 
     # Sampling factor for JPEG and WebP
-    if [[ "$output_format" == "jpeg" || "$output_format" == "webp" ]]; then
+    if [[ "$COMPRESS" == true && ( "$output_format" == "jpeg" || "$output_format" == "webp" ) ]]; then
         magick_args+=("-sampling-factor" "4:2:0")
     fi
 
@@ -323,15 +419,31 @@ process_file() {
     # Quality settings
     local quality
     quality="$(get_quality_for_format "$output_format")"
-    if [[ "$output_format" == "png" ]]; then
-        if [[ -n "$QUALITY_OVERRIDE" ]]; then
-            magick_args+=("-quality" "$QUALITY_OVERRIDE")
-        else
-            magick_args+=("-define" "png:compression-level=$PNG_COMPRESSION_LEVEL")
-        fi
-    elif [[ -n "$quality" ]]; then
+    if [[ "$output_format" == "png" && ( "$COMPRESS" == true || -n "$CONVERT_FORMAT" ) ]]; then
+        # PNG is lossless here. Keep deterministic max compression and avoid
+        # mapping generic --quality values to settings that can bloat output.
+        magick_args+=("-define" "png:compression-level=$PNG_COMPRESSION_LEVEL")
+        magick_args+=("-define" "png:compression-filter=5")
+        magick_args+=("-define" "png:compression-strategy=1")
+        magick_args+=("-define" "png:exclude-chunks=date,time")
+    elif [[ ( "$COMPRESS" == true || -n "$CONVERT_FORMAT" ) && -n "$quality" ]]; then
         magick_args+=("-quality" "$quality")
+    elif [[ -n "$QUALITY_OVERRIDE" ]]; then
+        magick_args+=("-quality" "$QUALITY_OVERRIDE")
     fi
+
+    if (( ${#magick_args[@]} > 0 )); then
+        log_debug "Magick args: ${magick_args[*]}"
+    else
+        log_debug "Magick args: <none>"
+    fi
+    if [[ -n "$RESIZE" ]]; then
+        log_debug "Resize: $RESIZE"
+    fi
+    if [[ -n "$MAX_WIDTH" || -n "$MAX_HEIGHT" ]]; then
+        log_debug "Max dimensions: ${MAX_WIDTH:-auto}x${MAX_HEIGHT:-auto}"
+    fi
+    log_debug "Quality: ${quality:-default} (format=$output_format)"
 
     # Create temp file in the same directory for atomic move
     local output_dir
@@ -339,18 +451,29 @@ process_file() {
     local tmp_file
     tmp_file="$(mktemp "${output_dir}/.imgtool_tmp_XXXXXX")"
 
+    local magick_output="${output_format}:${tmp_file}"
+    log_debug "Command: magick \"$input_file\" ${magick_args[*]} \"$magick_output\""
+
     # Execute magick
-    if ! magick "$input_file" "${magick_args[@]}" "$tmp_file" 2>/dev/null; then
-        log_error "Failed to process: $input_file"
-        rm -f "$tmp_file"
-        return 1
+    if (( VERBOSE >= 3 )); then
+        if ! magick "$input_file" "${magick_args[@]}" "$magick_output"; then
+            log_error "Failed to process: $input_file"
+            rm -f "$tmp_file"
+            return 1
+        fi
+    else
+        if ! magick "$input_file" "${magick_args[@]}" "$magick_output" 2>/dev/null; then
+            log_error "Failed to process: $input_file"
+            rm -f "$tmp_file"
+            return 1
+        fi
     fi
 
     local output_size
     output_size="$(get_file_size_bytes "$tmp_file")"
 
     # If not converting and output is larger than input, keep original
-    if [[ "$is_converting" == false && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" ]]; then
+    if [[ "$COMPRESS" == true && "$is_converting" == false && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" ]]; then
         if (( output_size >= input_size )); then
             log_info "Skipped (output not smaller): $input_file ($(human_readable_size "$input_size"))"
             rm -f "$tmp_file"
@@ -433,6 +556,11 @@ build_find_args() {
 # ── Main ──────────────────────────────────────────────────────────────
 
 main() {
+    if [[ $# -eq 0 ]]; then
+        show_help
+        return 0
+    fi
+
     parse_args "$@"
 
     # Handle single-file processing for parallel mode
@@ -448,6 +576,10 @@ main() {
 
     log_info "Scanning: $TARGET_DIR"
     [[ "$DRY_RUN" == true ]] && log_info "Dry-run mode enabled"
+    (( VERBOSE >= 1 )) && log_verbose "Verbose level: $VERBOSE"
+    if (( VERBOSE >= 1 )) && [[ "$COMPRESS" == true ]]; then
+        log_verbose "Compression: enabled"
+    fi
 
     local processed=0
     local skipped=0
@@ -455,18 +587,40 @@ main() {
     local total_input=0
     local total_output=0
     local file_count=0
+    local total_files=0
+
+    if (( PARALLEL > 1 )) && [[ "$SHOW_PROGRESS" == true ]]; then
+        log_warn "--progress is only available in sequential mode; continuing without progress bar in parallel mode."
+        SHOW_PROGRESS=false
+    fi
+
+    # Count files for progress
+    if [[ "$SHOW_PROGRESS" == true ]]; then
+        local count_cmd
+        count_cmd=(find "$TARGET_DIR" "(")
+        local first_c=true
+        for ext in $SUPPORTED_EXTENSIONS; do
+            if [[ "$first_c" == true ]]; then first_c=false; else count_cmd+=("-o"); fi
+            count_cmd+=("-iname" "*.${ext}")
+        done
+        count_cmd+=(")" "-type" "f")
+        total_files=$("${count_cmd[@]}" 2>/dev/null | wc -l | tr -d ' ')
+        log_info "Found $total_files files to process"
+    fi
 
     if (( PARALLEL > 1 )); then
         # Parallel mode: use xargs with self-invocation
         local results_dir
         results_dir="$(mktemp -d)"
-        trap 'rm -rf "$results_dir"' EXIT
+        RESULTS_DIR_CLEANUP="$results_dir"
+        trap '[[ -n "${RESULTS_DIR_CLEANUP:-}" ]] && rm -rf "$RESULTS_DIR_CLEANUP"' EXIT
 
         local script_path
         script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
         # Build the argument passthrough
         local -a passthrough_args=()
+        [[ "$COMPRESS" == true ]]    && passthrough_args+=("--compress")
         [[ -n "$RESIZE" ]]           && passthrough_args+=("--resize" "$RESIZE")
         [[ -n "$MAX_WIDTH" ]]        && passthrough_args+=("--max-width" "$MAX_WIDTH")
         [[ -n "$MAX_HEIGHT" ]]       && passthrough_args+=("--max-height" "$MAX_HEIGHT")
@@ -474,6 +628,8 @@ main() {
         [[ -n "$QUALITY_OVERRIDE" ]] && passthrough_args+=("--quality" "$QUALITY_OVERRIDE")
         [[ "$KEEP_ORIGINAL" == true ]] && passthrough_args+=("--keep-original")
         [[ "$DRY_RUN" == true ]]     && passthrough_args+=("--dry-run")
+        (( VERBOSE >= 3 ))           && passthrough_args+=("-vvv")
+        (( VERBOSE >= 1 && VERBOSE < 3 )) && passthrough_args+=("-v")
         # TARGET_DIR is required for parse_args but not used in single mode
         passthrough_args+=("$TARGET_DIR")
 
@@ -494,7 +650,9 @@ main() {
         # Process with xargs, capturing output
         "${find_cmd[@]}" 2>/dev/null | xargs -0 -P "$PARALLEL" -I{} bash -c '
             result=$("'"$script_path"'" '"$(printf '%q ' "${passthrough_args[@]}")"' --_process-single "$1" 2>&1)
+            status=$?
             echo "$result" >> "'"$results_dir"'/result_$$.txt"
+            echo "__IMGTOOL_STATUS__:$status" >> "'"$results_dir"'/result_$$.txt"
         ' _ {} || true
 
         # Aggregate results
@@ -512,9 +670,14 @@ main() {
                         processed=$(( processed + 1 ))
                         total_output=$(( total_output + out_sz ))
                     fi
+                elif [[ "$line" =~ ^__IMGTOOL_STATUS__:[0-9]+$ ]]; then
+                    local status_code="${line#__IMGTOOL_STATUS__:}"
+                    if (( status_code != 0 )); then
+                        failed=$(( failed + 1 ))
+                    fi
                 else
                     # Print log lines
-                    echo "$line"
+                    echo "$line" >&2
                 fi
             done < "$result_file"
         done
@@ -536,6 +699,7 @@ main() {
 
         while IFS= read -r -d '' file; do
             file_count=$(( file_count + 1 ))
+            show_progress "$file_count" "$total_files" "$(basename "$file")"
             local result
             if result="$(process_file "$file")"; then
                 if [[ "$result" =~ ^[0-9]+\ [0-9]+\ [0-9]+$ ]]; then
@@ -553,6 +717,7 @@ main() {
                 failed=$(( failed + 1 ))
             fi
         done < <("${find_cmd[@]}" 2>/dev/null)
+        clear_progress
     fi
 
     local end_time
@@ -560,6 +725,11 @@ main() {
     local elapsed=$(( end_time - start_time ))
 
     print_summary "$processed" "$skipped" "$failed" "$total_input" "$total_output" "$elapsed"
+
+    if [[ "$COMPRESS" == true && "$processed" -eq 0 && "$skipped" -gt 0 && "$failed" -eq 0 && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" && -z "$CONVERT_FORMAT" ]]; then
+        log_warn "No file became smaller with current compression settings."
+        log_warn "Try a lower quality value, e.g.: --compress --quality 70 <directory>"
+    fi
 }
 
 main "$@"

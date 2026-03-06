@@ -11,6 +11,8 @@ Batch image processor for the command line. A single, self-contained Bash script
 - **Parallel processing** - Process multiple files simultaneously with `--parallel`
 - **Safe operations** - Atomic writes via temp files, skips replacement if output is larger than input
 - **Dry-run mode** - Preview what would happen without modifying files
+- **Progress bar** - Visual progress indicator with `--progress`
+- **Verbose & debug** - `-v` for file details, `-vvv` for full magick command tracing
 - **Cross-platform** - Works on macOS and Linux
 
 ## Requirements
@@ -40,7 +42,7 @@ Run directly from the repository without installing — ideal for one-off tasks:
 
 ```bash
 # Compress all images in ./images
-bash <(curl -sL https://fabioassuncao.com/gh/imgtool/imgtool.sh) ./images
+bash <(curl -sL https://fabioassuncao.com/gh/imgtool/imgtool.sh) --compress ./images
 
 # Resize to 50%
 bash <(curl -sL https://fabioassuncao.com/gh/imgtool/imgtool.sh) --resize 50% ./images
@@ -90,10 +92,13 @@ imgtool ./images
 imgtool.sh [OPTIONS] <directory>
 ```
 
+At least one operation is required: `--compress`, `--resize`, `--max-width`/`--max-height`, or `--convert`.
+
 ### Options
 
 | Option | Description |
 |---|---|
+| `--compress` | Enable compression using format-aware defaults |
 | `--resize N%` | Proportional resize (e.g., `50%`) |
 | `--max-width PIXELS` | Maximum width ceiling (shrink only) |
 | `--max-height PIXELS` | Maximum height ceiling (shrink only) |
@@ -102,6 +107,9 @@ imgtool.sh [OPTIONS] <directory>
 | `--keep-original` | Keep original file alongside processed file |
 | `--parallel [N]` | Parallel processing (default: CPU count) |
 | `--dry-run` | Preview operations without processing |
+| `--progress` | Show progress bar during processing |
+| `-v` | Verbose output (file details) |
+| `-vvv` | Debug output (magick commands, dimensions) |
 | `--help` | Show help message |
 | `--version` | Show version |
 
@@ -110,7 +118,7 @@ imgtool.sh [OPTIONS] <directory>
 **Compress all images in a directory (in place):**
 
 ```bash
-./imgtool.sh ./images
+./imgtool.sh --compress ./images
 ```
 
 **Resize to 50%:**
@@ -141,6 +149,18 @@ imgtool.sh [OPTIONS] <directory>
 
 ```bash
 ./imgtool.sh --dry-run ./images
+```
+
+**With progress bar and verbose output:**
+
+```bash
+./imgtool.sh --progress -v ./images
+```
+
+**Debug mode (full magick command details):**
+
+```bash
+./imgtool.sh -vvv ./images
 ```
 
 ## Supported Formats
