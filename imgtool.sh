@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_NUMERIC=C
 
 readonly VERSION="1.0.0"
 readonly SUPPORTED_EXTENSIONS="jpg jpeg png webp avif"
