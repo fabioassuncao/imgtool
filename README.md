@@ -40,19 +40,19 @@ Run directly from the repository without installing — ideal for one-off tasks:
 
 ```bash
 # Compress all images in ./images
-bash <(curl -sL https://raw.githubusercontent.com/fabioassuncao/imgtool/main/imgtool.sh) ./images
+bash <(curl -sL https://fabioassuncao.com/gh/imgtool/imgtool.sh) ./images
 
 # Resize to 50%
-bash <(curl -sL https://raw.githubusercontent.com/fabioassuncao/imgtool/main/imgtool.sh) --resize 50% ./images
+bash <(curl -sL https://fabioassuncao.com/gh/imgtool/imgtool.sh) --resize 50% ./images
 
 # Convert to WebP keeping originals
-bash <(curl -sL https://raw.githubusercontent.com/fabioassuncao/imgtool/main/imgtool.sh) --convert webp --keep-original ./photos
+bash <(curl -sL https://fabioassuncao.com/gh/imgtool/imgtool.sh) --convert webp --keep-original ./photos
 ```
 
 Using `wget`:
 
 ```bash
-bash <(wget -qO- https://raw.githubusercontent.com/fabioassuncao/imgtool/main/imgtool.sh) ./images
+bash <(wget -qO- https://fabioassuncao.com/gh/imgtool/imgtool.sh) ./images
 ```
 
 > **Note:** Remote execution requires `curl` or `wget` and an internet connection. ImageMagick 7 must be installed locally. The `--parallel` flag is not supported in remote mode since self-invocation requires a local script file.
@@ -63,7 +63,7 @@ For regular use, download the script locally:
 
 ```bash
 # Download and make executable
-curl -sL https://raw.githubusercontent.com/fabioassuncao/imgtool/main/imgtool.sh -o imgtool.sh
+curl -sL https://fabioassuncao.com/gh/imgtool/imgtool.sh -o imgtool.sh
 chmod +x imgtool.sh
 
 # Optional: move to a directory in your PATH for global access
