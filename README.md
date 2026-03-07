@@ -175,18 +175,25 @@ At least one operation is required: `--compress`, `--resize`, `--max-width`/`--m
 ## How It Works
 
 1. Recursively finds all supported image files (`jpg`, `jpeg`, `png`, `webp`, `avif`)
-2. For each file, builds an optimized `magick` command with:
-   - `-strip` to remove metadata (EXIF, ICC profiles, etc.)
-   - `-interlace Plane` for progressive encoding
-   - `-sampling-factor 4:2:0` for JPEG/WebP
-   - Format-appropriate quality settings
-3. Writes output to a temp file in the same directory (ensures atomic move on same filesystem)
-4. Compares output size to input — if compress-only and output is larger, keeps original
-5. Replaces original (or writes alongside it with `--keep-original`)
+2. Applies the processing pipeline in this order:
+   - `--resize` first
+   - `--max-width` / `--max-height` as a shrink-only ceiling
+   - destination-format encoding/compression
+   - file replacement or conversion rename
+3. Compression is format-aware:
+   - `-strip` removes metadata when `--compress` is enabled
+   - `-interlace Plane` is used for JPEG output only
+   - `-sampling-factor 4:2:0` is used for JPEG/WebP output when `--compress` is enabled
+   - format-appropriate quality/compression settings are applied to the destination format
+4. Writes output to a temp file in the same directory (ensures atomic move on same filesystem)
+5. Compares output size to input — if compress-only and output is larger, keeps original
+6. Replaces original (or writes alongside it with `--keep-original`)
 
 ### Resize Behavior
 
 When `--resize` is combined with `--max-width`/`--max-height`, the resize is applied first, then the max dimensions act as a ceiling (shrink only, using ImageMagick's `>` flag). This ensures images never exceed the specified limits.
+
+When `--convert` is combined with `--compress`, compression is applied to the destination format. For example, `--resize 50% --compress --convert webp` means: resize first, then encode as compressed WebP, then replace the original file unless `--keep-original` is used.
 
 ### Parallel Mode
 
@@ -210,7 +217,3 @@ After processing, a summary is displayed:
   Elapsed time : 12 seconds
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
-
-## License
-
-MIT

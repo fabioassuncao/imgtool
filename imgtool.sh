@@ -113,10 +113,22 @@ OPTIONS:
 QUALITY DEFAULTS:
     JPEG = 85, WebP = 82, AVIF = 60, PNG = compression-level 9
 
+PIPELINE ORDER:
+    1. Resize with --resize (if set)
+    2. Apply --max-width/--max-height ceiling (if set)
+    3. Encode/compress using the destination format settings
+    4. Write/replace the output file (convert changes the extension)
+
+NOTES:
+    - When --convert is used together with --compress, compression is applied
+      to the destination format, not the original one.
+    - Log lines report the final action and the operations applied.
+
 EXAMPLES:
     imgtool.sh --compress ./images               # Compress in place
     imgtool.sh --resize 50% ./images             # Resize to 50%
     imgtool.sh --compress --quality 70 ./images  # Compress with custom quality
+    imgtool.sh --resize 50% --compress --convert webp ./images
     imgtool.sh --convert webp --keep-original .   # Convert to WebP, keep originals
     imgtool.sh --max-width 800 --max-height 600 ./photos
     imgtool.sh --parallel 8 --quality 70 ./bulk
@@ -338,6 +350,36 @@ get_output_file_extension() {
     esac
 }
 
+describe_operations() {
+    local input_ext="$1"
+    local output_ext="$2"
+    local is_converting="$3"
+    local -a ops=()
+
+    [[ -n "$RESIZE" ]] && ops+=("resize=$RESIZE")
+    if [[ -n "$MAX_WIDTH" || -n "$MAX_HEIGHT" ]]; then
+        ops+=("max=${MAX_WIDTH:-auto}x${MAX_HEIGHT:-auto}")
+    fi
+    [[ "$COMPRESS" == true ]] && ops+=("compress")
+    if [[ "$is_converting" == true ]]; then
+        ops+=("convert=${input_ext}->${output_ext}")
+    fi
+
+    if (( ${#ops[@]} == 0 )); then
+        echo "none"
+    else
+        local joined=""
+        local op
+        for op in "${ops[@]}"; do
+            if [[ -n "$joined" ]]; then
+                joined+=", "
+            fi
+            joined+="$op"
+        done
+        echo "$joined"
+    fi
+}
+
 process_file() {
     local input_file="$1"
 
@@ -374,14 +416,16 @@ process_file() {
     if [[ "$is_converting" == true ]]; then
         log_verbose "Converting: $input_ext -> $output_file_ext"
     fi
+    local operations
+    operations="$(describe_operations "$input_ext" "$output_file_ext" "$is_converting")"
 
     if [[ "$DRY_RUN" == true ]]; then
         local hr_size
         hr_size="$(human_readable_size "$input_size")"
         if [[ "$is_converting" == true ]]; then
-            log_info "[DRY-RUN] Would convert: $input_file -> $output_file ($hr_size)"
+            log_info "[DRY-RUN] Would apply [$operations]: $input_file -> $output_file ($hr_size)"
         else
-            log_info "[DRY-RUN] Would process: $input_file ($hr_size)"
+            log_info "[DRY-RUN] Would apply [$operations]: $input_file ($hr_size)"
         fi
         echo "$input_size $input_size 0"
         return 0
@@ -490,14 +534,14 @@ process_file() {
 
     if [[ "$KEEP_ORIGINAL" == true ]]; then
         mv -f "$tmp_file" "$output_file"
-        log_info "Processed: $input_file -> $output_file ($(human_readable_size "$input_size") -> $(human_readable_size "$output_size"), ${saved_pct}% saved)"
+        log_info "Processed [$operations]: $input_file -> $output_file ($(human_readable_size "$input_size") -> $(human_readable_size "$output_size"), ${saved_pct}% saved)"
     elif [[ "$is_converting" == true ]]; then
         mv -f "$tmp_file" "$output_file"
         rm -f "$input_file"
-        log_info "Converted: $input_file -> $output_file ($(human_readable_size "$input_size") -> $(human_readable_size "$output_size"), ${saved_pct}% saved)"
+        log_info "Converted [$operations]: $input_file -> $output_file ($(human_readable_size "$input_size") -> $(human_readable_size "$output_size"), ${saved_pct}% saved)"
     else
         mv -f "$tmp_file" "$output_file"
-        log_info "Processed: $input_file ($(human_readable_size "$input_size") -> $(human_readable_size "$output_size"), ${saved_pct}% saved)"
+        log_info "Processed [$operations]: $input_file ($(human_readable_size "$input_size") -> $(human_readable_size "$output_size"), ${saved_pct}% saved)"
     fi
 
     echo "$input_size $output_size 0"
