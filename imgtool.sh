@@ -92,11 +92,13 @@ USAGE:
 DESCRIPTION:
     Recursively processes images in the given directory using ImageMagick 7.
     Supports compression, resizing, dimension limits, and format conversion.
-    At least one operation is required: --compress, --resize, --max-width/--max-height, or --convert.
+    At least one operation is required: --compress, --resize, --width/--height, --max-width/--max-height, or --convert.
 
 OPTIONS:
     --compress            Enable compression using format-aware defaults
     --resize N%            Proportional resize (e.g., 50%)
+    --width PIXELS         Resize to exact width (proportional if --height omitted)
+    --height PIXELS        Resize to exact height (proportional if --width omitted)
     --max-width PIXELS     Maximum width ceiling (shrink only)
     --max-height PIXELS    Maximum height ceiling (shrink only)
     --convert FORMAT       Convert to format: webp, png, jpeg, avif
@@ -116,12 +118,15 @@ QUALITY DEFAULTS:
 PIPELINE ORDER:
     1. Resize with --resize (if set)
     2. Apply --max-width/--max-height ceiling (if set)
-    3. Encode/compress using the destination format settings
-    4. Write/replace the output file (convert changes the extension)
+    3. Apply --width/--height exact dimensions (if set)
+    4. Encode/compress using the destination format settings
+    5. Write/replace the output file (convert changes the extension)
 
 NOTES:
     - When --convert is used together with --compress, compression is applied
       to the destination format, not the original one.
+    - --width/--height cannot be combined with --max-width/--max-height or --resize.
+    - When both --width and --height are given, aspect ratio may be distorted.
     - Log lines report the final action and the operations applied.
 
 EXAMPLES:
@@ -131,6 +136,8 @@ EXAMPLES:
     imgtool.sh --resize 50% --compress --convert webp ./images
     imgtool.sh --convert webp --keep-original .   # Convert to WebP, keep originals
     imgtool.sh --max-width 800 --max-height 600 ./photos
+    imgtool.sh --width 800 ./images                # Resize to 800px wide (proportional)
+    imgtool.sh --width 800 --height 600 ./images   # Force exact 800x600 dimensions
     imgtool.sh --parallel 8 --quality 70 ./bulk
     imgtool.sh --progress -v ./images             # With progress bar and verbose
     imgtool.sh -vvv ./images                      # Debug mode (full details)
@@ -149,6 +156,8 @@ parse_args() {
     RESIZE=""
     MAX_WIDTH=""
     MAX_HEIGHT=""
+    WIDTH=""
+    HEIGHT=""
     CONVERT_FORMAT=""
     QUALITY_OVERRIDE=""
     KEEP_ORIGINAL=false
@@ -172,6 +181,12 @@ parse_args() {
             --max-height)
                 [[ -z "${2:-}" ]] && { log_error "--max-height requires a value"; exit 1; }
                 MAX_HEIGHT="$2"; shift 2 ;;
+            --width)
+                [[ -z "${2:-}" ]] && { log_error "--width requires a value"; exit 1; }
+                WIDTH="$2"; shift 2 ;;
+            --height)
+                [[ -z "${2:-}" ]] && { log_error "--height requires a value"; exit 1; }
+                HEIGHT="$2"; shift 2 ;;
             --convert)
                 [[ -z "${2:-}" ]] && { log_error "--convert requires a format (webp, png, jpeg, avif)"; exit 1; }
                 CONVERT_FORMAT="$2"; shift 2 ;;
@@ -255,7 +270,7 @@ validate() {
         exit 1
     fi
 
-    if [[ "$COMPRESS" == false && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" && -z "$CONVERT_FORMAT" ]]; then
+    if [[ "$COMPRESS" == false && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" && -z "$WIDTH" && -z "$HEIGHT" && -z "$CONVERT_FORMAT" ]]; then
         log_warn "No operation specified."
         show_help
         exit 0
@@ -303,6 +318,26 @@ validate() {
 
     if [[ -n "$MAX_HEIGHT" ]] && ! [[ "$MAX_HEIGHT" =~ ^[0-9]+$ ]]; then
         log_error "--max-height must be a positive integer"
+        exit 1
+    fi
+
+    if [[ -n "$WIDTH" ]] && ! [[ "$WIDTH" =~ ^[0-9]+$ ]]; then
+        log_error "--width must be a positive integer"
+        exit 1
+    fi
+
+    if [[ -n "$HEIGHT" ]] && ! [[ "$HEIGHT" =~ ^[0-9]+$ ]]; then
+        log_error "--height must be a positive integer"
+        exit 1
+    fi
+
+    if [[ ( -n "$WIDTH" || -n "$HEIGHT" ) && ( -n "$MAX_WIDTH" || -n "$MAX_HEIGHT" ) ]]; then
+        log_error "--width/--height cannot be combined with --max-width/--max-height"
+        exit 1
+    fi
+
+    if [[ ( -n "$WIDTH" || -n "$HEIGHT" ) && -n "$RESIZE" ]]; then
+        log_error "--width/--height cannot be combined with --resize"
         exit 1
     fi
 }
@@ -359,6 +394,9 @@ describe_operations() {
     [[ -n "$RESIZE" ]] && ops+=("resize=$RESIZE")
     if [[ -n "$MAX_WIDTH" || -n "$MAX_HEIGHT" ]]; then
         ops+=("max=${MAX_WIDTH:-auto}x${MAX_HEIGHT:-auto}")
+    fi
+    if [[ -n "$WIDTH" || -n "$HEIGHT" ]]; then
+        ops+=("dim=${WIDTH:-auto}x${HEIGHT:-auto}")
     fi
     [[ "$COMPRESS" == true ]] && ops+=("compress")
     if [[ "$is_converting" == true ]]; then
@@ -460,6 +498,20 @@ process_file() {
         magick_args+=("-resize" "${dim_w}x${dim_h}>")
     fi
 
+    # Exact dimensions (--width / --height)
+    if [[ -n "$WIDTH" || -n "$HEIGHT" ]]; then
+        if [[ -n "$WIDTH" && -n "$HEIGHT" ]]; then
+            # Both specified: force exact dimensions (may distort)
+            magick_args+=("-resize" "${WIDTH}x${HEIGHT}!")
+        elif [[ -n "$WIDTH" ]]; then
+            # Width only: proportional resize
+            magick_args+=("-resize" "${WIDTH}x")
+        else
+            # Height only: proportional resize
+            magick_args+=("-resize" "x${HEIGHT}")
+        fi
+    fi
+
     # Quality settings
     local quality
     quality="$(get_quality_for_format "$output_format")"
@@ -486,6 +538,9 @@ process_file() {
     fi
     if [[ -n "$MAX_WIDTH" || -n "$MAX_HEIGHT" ]]; then
         log_debug "Max dimensions: ${MAX_WIDTH:-auto}x${MAX_HEIGHT:-auto}"
+    fi
+    if [[ -n "$WIDTH" || -n "$HEIGHT" ]]; then
+        log_debug "Exact dimensions: ${WIDTH:-auto}x${HEIGHT:-auto}"
     fi
     log_debug "Quality: ${quality:-default} (format=$output_format)"
 
@@ -517,7 +572,7 @@ process_file() {
     output_size="$(get_file_size_bytes "$tmp_file")"
 
     # If not converting and output is larger than input, keep original
-    if [[ "$COMPRESS" == true && "$is_converting" == false && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" ]]; then
+    if [[ "$COMPRESS" == true && "$is_converting" == false && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" && -z "$WIDTH" && -z "$HEIGHT" ]]; then
         if (( output_size >= input_size )); then
             log_info "Skipped (output not smaller): $input_file ($(human_readable_size "$input_size"))"
             rm -f "$tmp_file"
@@ -668,6 +723,8 @@ main() {
         [[ -n "$RESIZE" ]]           && passthrough_args+=("--resize" "$RESIZE")
         [[ -n "$MAX_WIDTH" ]]        && passthrough_args+=("--max-width" "$MAX_WIDTH")
         [[ -n "$MAX_HEIGHT" ]]       && passthrough_args+=("--max-height" "$MAX_HEIGHT")
+        [[ -n "$WIDTH" ]]            && passthrough_args+=("--width" "$WIDTH")
+        [[ -n "$HEIGHT" ]]           && passthrough_args+=("--height" "$HEIGHT")
         [[ -n "$CONVERT_FORMAT" ]]   && passthrough_args+=("--convert" "$CONVERT_FORMAT")
         [[ -n "$QUALITY_OVERRIDE" ]] && passthrough_args+=("--quality" "$QUALITY_OVERRIDE")
         [[ "$KEEP_ORIGINAL" == true ]] && passthrough_args+=("--keep-original")
@@ -770,7 +827,7 @@ main() {
 
     print_summary "$processed" "$skipped" "$failed" "$total_input" "$total_output" "$elapsed"
 
-    if [[ "$COMPRESS" == true && "$processed" -eq 0 && "$skipped" -gt 0 && "$failed" -eq 0 && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" && -z "$CONVERT_FORMAT" ]]; then
+    if [[ "$COMPRESS" == true && "$processed" -eq 0 && "$skipped" -gt 0 && "$failed" -eq 0 && -z "$RESIZE" && -z "$MAX_WIDTH" && -z "$MAX_HEIGHT" && -z "$WIDTH" && -z "$HEIGHT" && -z "$CONVERT_FORMAT" ]]; then
         log_warn "No file became smaller with current compression settings."
         log_warn "Try a lower quality value, e.g.: --compress --quality 70 <directory>"
     fi

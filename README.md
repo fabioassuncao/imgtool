@@ -6,7 +6,7 @@ Batch image processor for the command line. A single, self-contained Bash script
 
 - **Recursive processing** - Finds and processes images in all subdirectories
 - **Smart compression** - Format-aware quality defaults (JPEG 85, WebP 82, AVIF 60, PNG level 9)
-- **Resize** - Proportional scaling (`--resize 50%`) or max dimension capping (`--max-width`, `--max-height`)
+- **Resize** - Proportional scaling (`--resize 50%`), exact dimensions (`--width`, `--height`), or max dimension capping (`--max-width`, `--max-height`)
 - **Format conversion** - Convert between JPEG, PNG, WebP, and AVIF
 - **Parallel processing** - Process multiple files simultaneously with `--parallel`
 - **Safe operations** - Atomic writes via temp files, skips replacement if output is larger than input
@@ -92,7 +92,7 @@ imgtool ./images
 imgtool.sh [OPTIONS] <directory>
 ```
 
-At least one operation is required: `--compress`, `--resize`, `--max-width`/`--max-height`, or `--convert`.
+At least one operation is required: `--compress`, `--resize`, `--width`/`--height`, `--max-width`/`--max-height`, or `--convert`.
 
 ### Options
 
@@ -100,6 +100,8 @@ At least one operation is required: `--compress`, `--resize`, `--max-width`/`--m
 |---|---|
 | `--compress` | Enable compression using format-aware defaults |
 | `--resize N%` | Proportional resize (e.g., `50%`) |
+| `--width PIXELS` | Resize to exact width (proportional if `--height` omitted) |
+| `--height PIXELS` | Resize to exact height (proportional if `--width` omitted) |
 | `--max-width PIXELS` | Maximum width ceiling (shrink only) |
 | `--max-height PIXELS` | Maximum height ceiling (shrink only) |
 | `--convert FORMAT` | Convert to: `webp`, `png`, `jpeg`, `avif` |
@@ -137,6 +139,18 @@ At least one operation is required: `--compress`, `--resize`, `--max-width`/`--m
 
 ```bash
 ./imgtool.sh --max-width 800 --max-height 600 ./photos
+```
+
+**Resize to exact width (height scales proportionally):**
+
+```bash
+./imgtool.sh --width 800 ./images
+```
+
+**Force exact 800x600 dimensions (may distort aspect ratio):**
+
+```bash
+./imgtool.sh --width 800 --height 600 ./images
 ```
 
 **Parallel processing with custom quality:**
@@ -178,6 +192,7 @@ At least one operation is required: `--compress`, `--resize`, `--max-width`/`--m
 2. Applies the processing pipeline in this order:
    - `--resize` first
    - `--max-width` / `--max-height` as a shrink-only ceiling
+   - `--width` / `--height` exact dimensions
    - destination-format encoding/compression
    - file replacement or conversion rename
 3. Compression is format-aware:
